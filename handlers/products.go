@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"context"
+	"fmt"
+	"github.com/gorilla/mux"
 	"go-microservice-webinar/data"
 	"log"
 	"net/http"
-	"regexp"
 	"strconv"
 )
 
@@ -16,7 +18,7 @@ func NewProducts(l *log.Logger) *Products {
 	return &Products{l}
 }
 
-func (p *Products) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+/*func (p *Products) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		p.getProducts(rw)
 		return
@@ -53,9 +55,9 @@ func (p *Products) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	rw.WriteHeader(http.StatusMethodNotAllowed)
-}
+}*/
 
-func (p *Products) getProducts(rw http.ResponseWriter) {
+func (p *Products) GetProducts(rw http.ResponseWriter, r *http.Request) {
 	ps := data.GetProducts()
 	err := ps.ToJSON(rw)
 	if err != nil {
@@ -63,27 +65,43 @@ func (p *Products) getProducts(rw http.ResponseWriter) {
 	}
 }
 
-func (p *Products) addProduct(rw http.ResponseWriter, r *http.Request) {
+func (p *Products) AddProduct(rw http.ResponseWriter, r *http.Request) {
 	p.l.Println("Handle HTTP POST")
-
-	rp := &data.Product{}
-	err := rp.FromJSON(r.Body)
-	if err != nil {
-		http.Error(rw, "Unable to unmarshall product", http.StatusBadRequest)
-	}
-
-	data.AddProduct(rp)
+	product := r.Context().Value(KeyProduct{}).(*data.Product)
+	err := product.Validate()
+	 if err != nil {
+	 	http.Error(rw, fmt.Sprintf("Invalid input JSON: %v", err), http.StatusBadRequest)
+	 	return
+	 }
+	data.AddProduct(product)
 	//p.l.Printf("Product: %#v", rp)
 }
 
-func (p *Products) updateProduct(id int, rw http.ResponseWriter, r *http.Request) {
-	p.l.Println("Handle HTTP PUT")
-
-	rp := &data.Product{}
-	err := rp.FromJSON(r.Body)
+func (p *Products) UpdateProduct(rw http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		http.Error(rw, "Unable to unmarshall product", http.StatusBadRequest)
+		http.Error(rw, "Unable to parse id", http.StatusBadRequest)
 	}
 
-	data.UpdateProduct(id, rp)
+	p.l.Println("Handle HTTP PUT")
+	product := r.Context().Value(KeyProduct{}).(*data.Product)
+	data.UpdateProduct(id, product)
+}
+
+type KeyProduct struct{}
+
+func (p *Products) MiddlewareProductValidation(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		product := &data.Product{}
+		err := product.FromJSON(request.Body)
+		if err != nil {
+			http.Error(writer, "Unable to unmarshall product", http.StatusBadRequest)
+			return
+		}
+
+		ctx := context.WithValue(request.Context(), KeyProduct{}, product)
+		req := request.WithContext(ctx)
+		next.ServeHTTP(writer, req)
+	})
 }
